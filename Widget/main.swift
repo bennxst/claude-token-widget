@@ -43,19 +43,60 @@ var lastLimits: (Limit?, Limit?) = (nil, nil)
 var lastFetch = Date.distantPast
 var lastRenew = Date.distantPast
 
+var loginNeeded = false   // true: kein gültiger Login, Erneuern hilft nicht -> Hinweis "Anmelden"
+
+// Claude Code finden: Terminal-Installation oder das, was die Claude-Desktop-App mitbringt
+func claudeBinary() -> String? {
+    let home = NSHomeDirectory(), fm = FileManager.default
+    let fixed = [home + "/.local/bin/claude", "/opt/homebrew/bin/claude", "/usr/local/bin/claude", home + "/.claude/local/claude"]
+    if let b = fixed.first(where: { fm.isExecutableFile(atPath: $0) }) { return b }
+    let base = home + "/Library/Application Support/Claude/claude-code"
+    var best: (String, Date)?
+    for v in (try? fm.contentsOfDirectory(atPath: base)) ?? [] {
+        for h in (try? fm.contentsOfDirectory(atPath: base + "/" + v)) ?? [] {
+            let p = "\(base)/\(v)/\(h)/claude.app/Contents/MacOS/claude"
+            if fm.isExecutableFile(atPath: p), let d = (try? fm.attributesOfItem(atPath: p))?[.modificationDate] as? Date,
+               best == nil || d > best!.1 { best = (p, d) }
+        }
+    }
+    return best?.0
+}
+
+// Claude Code braucht USER/HOME, sonst findet es den Login im Schlüsselbund nicht
+func claudeEnvironment() -> [String: String] {
+    var env = ProcessInfo.processInfo.environment
+    env["HOME"] = NSHomeDirectory()
+    if env["USER"] == nil { env["USER"] = NSUserName() }
+    if env["LOGNAME"] == nil { env["LOGNAME"] = NSUserName() }
+    return env
+}
+
+// Öffnet das Terminal mit "claude auth login" (Anmeldung läuft im Browser)
+func openLogin() {
+    guard let bin = claudeBinary() else {
+        NSWorkspace.shared.open(URL(string: "https://claude.com/claude-code")!)
+        return
+    }
+    let script = NSTemporaryDirectory() + "claude-anmelden.command"
+    let text = "#!/bin/zsh\necho 'Anmeldung bei Claude für das Token-Widget …'\n\"\(bin)\" auth login\necho\necho 'Fertig. Dieses Fenster kann geschlossen werden.'\n"
+    try? text.write(toFile: script, atomically: true, encoding: .utf8)
+    try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script)
+    NSWorkspace.shared.open(URL(fileURLWithPath: script))
+}
+
 // Abgelaufenen Login erneuern: Claude Code selbst einmal kurz starten (günstigstes Modell, ohne Verlauf).
 // Höchstens alle 30 Minuten. Ohne installiertes Claude Code passiert nichts.
 func renewLogin() {
     guard Date().timeIntervalSince(lastRenew) > 1800 else { return }
     lastRenew = Date()
     let home = NSHomeDirectory()
-    let candidates = [home + "/.local/bin/claude", "/opt/homebrew/bin/claude", "/usr/local/bin/claude", home + "/.claude/local/claude"]
-    guard let bin = candidates.first(where: { FileManager.default.isExecutableFile(atPath: $0) }) else { return }
+    guard let bin = claudeBinary() else { loginNeeded = true; return }
     DispatchQueue.global(qos: .utility).async {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: bin)
         p.arguments = ["-p", "ok", "--model", "haiku", "--no-session-persistence"]
         p.currentDirectoryURL = URL(fileURLWithPath: home)
+        p.environment = claudeEnvironment()
         p.standardOutput = FileHandle.nullDevice
         p.standardError = FileHandle.nullDevice
         guard (try? p.run()) != nil else { return }
@@ -79,7 +120,7 @@ func fetchLimits() -> (Limit?, Limit?) {
     p.waitUntilExit()
     guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
           let oauth = obj["claudeAiOauth"] as? [String: Any],
-          let token = oauth["accessToken"] as? String else { lastLimits = (nil, nil); return lastLimits }
+          let token = oauth["accessToken"] as? String else { loginNeeded = true; lastLimits = (nil, nil); return lastLimits }
     var req = URLRequest(url: URL(string: "https://api.anthropic.com/api/oauth/usage")!)
     req.timeoutInterval = 15
     req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
@@ -93,7 +134,11 @@ func fetchLimits() -> (Limit?, Limit?) {
         sem.signal()
     }.resume()
     _ = sem.wait(timeout: .now() + 20)
-    if code == 401 { renewLogin() }
+    if code == 401 {
+        // Schon einmal erneuert und trotzdem abgelehnt -> Anmeldung ist wirklich abgelaufen
+        if Date().timeIntervalSince(lastRenew) < 1800 { loginNeeded = true } else { renewLogin() }
+    }
+    if code == 200 { loginNeeded = false }
     guard let d = result, let j = try? JSONSerialization.jsonObject(with: d) as? [String: Any] else { lastLimits = (nil, nil); return lastLimits }
     func limit(_ key: String) -> Limit? {
         guard let o = j[key] as? [String: Any], let u = o["utilization"] as? Double else { return nil }
@@ -344,11 +389,19 @@ final class App: NSObject, NSApplicationDelegate {
         ws.addObserver(self, selector: #selector(updateVisibility), name: NSWorkspace.didTerminateApplicationNotification, object: nil)
         updateVisibility()
 
+        // Direkt aus dem Download-Ordner gestartet (macOS verschiebt die App dann heimlich): Autostart würde nicht klappen
+        if Bundle.main.bundlePath.contains("/AppTranslocation/") {
+            let a = NSAlert()
+            a.messageText = "Bitte Token-Widget in den Programme-Ordner ziehen"
+            a.informativeText = "Dann von dort öffnen. Sonst kann das Widget nicht automatisch mit dem Mac starten."
+            a.runModal()
+        }
         // Beim ersten Start selbst als Anmeldeobjekt eintragen (startet dann mit dem Mac, unsichtbar bis Claude offen ist)
         if SMAppService.mainApp.status != .enabled { try? SMAppService.mainApp.register() }
 
         let menu = NSMenu()
         menu.addItem(withTitle: "Jetzt aktualisieren", action: #selector(refresh), keyEquivalent: "")
+        menu.addItem(withTitle: "Bei Claude anmelden …", action: #selector(login), keyEquivalent: "")
         menu.addItem(.separator())
         menu.addItem(withTitle: "Widget beenden", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "")
         view.menu = menu
@@ -361,6 +414,8 @@ final class App: NSObject, NSApplicationDelegate {
 
     static let claudeID = "com.anthropic.claudefordesktop"
     var claudeRunning: Bool { !NSRunningApplication.runningApplications(withBundleIdentifier: Self.claudeID).isEmpty }
+
+    @objc func login() { openLogin() }
 
     @objc func updateVisibility() {
         // Testmodus (--snapshot) und IMMER_SICHTBAR=1 zeigen das Widget immer
@@ -391,7 +446,14 @@ final class App: NSObject, NSApplicationDelegate {
                 if let l = limits.0 { self.view.fiveHour.show(l) }
                 else { self.view.fiveHour.showLocal(tokens: local.block, note: local.blockReset.map(LimitRow.resetText) ?? "kein aktives Fenster") }
                 if let l = limits.1 { self.view.week.show(l) }
-                else { self.view.week.showLocal(tokens: local.week, note: "letzte 7 Tage") }
+                else { self.view.week.showLocal(tokens: local.week, note: loginNeeded ? "Für %: Rechtsklick → Anmelden" : "letzte 7 Tage") }
+                // Punkt blau = mit Claude verbunden, grau = eigene Rechnung
+                self.view.dot.layer?.backgroundColor = (limits.0 != nil ? accent : NSColor.tertiaryLabelColor).cgColor
+                // Beim allerersten Mal ohne Login die Anmeldung einmal von selbst anbieten
+                if loginNeeded && !UserDefaults.standard.bool(forKey: "LoginAngeboten") && !CommandLine.arguments.contains("--snapshot") {
+                    UserDefaults.standard.set(true, forKey: "LoginAngeboten")
+                    openLogin()
+                }
                 // Testmodus: Token-Widget --snapshot <pfad.png> speichert ein Bild und beendet sich
                 if let i = CommandLine.arguments.firstIndex(of: "--snapshot"), i + 1 < CommandLine.arguments.count {
                     self.view.layoutSubtreeIfNeeded()
