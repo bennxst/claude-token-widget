@@ -7,7 +7,7 @@ Gezählt werden die Verläufe in `~/.claude/projects` auf deinem Mac.
 
 Quadratisches Widget (158 × 158, so groß wie ein kleines macOS-Widget) mit Milchglas-Hintergrund. Aktualisiert sich alle 30 Sekunden und zeigt:
 
-- **Gesamtverbrauch** gekürzt („1,58 Milliarden“), die genaue Zahl steht im Tooltip.
+- **Gesamtverbrauch** gekürzt („1,58 Milliarden“), die genaue Zahl klein oben rechts.
 - **5-Stunden-Limit und Wochen-Limit** mit Balken, Prozent und Reset-Zeit, wenn du in Claude Code angemeldet bist.
   Dafür liest das Widget deinen eigenen Claude-Code-Login aus dem Schlüsselbund und fragt damit alle 2 Minuten `api.anthropic.com` ab.
   Der Login verlässt deinen Mac nur in Richtung Anthropic und wird nirgends gespeichert.

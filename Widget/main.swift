@@ -170,13 +170,15 @@ final class LimitRow: NSView {
         guard let l = l else { pct.stringValue = "–"; bar.value = 0; reset.stringValue = ""; return }
         pct.stringValue = "\(Int(l.percent.rounded())) %"
         bar.value = l.percent
-        bar.color = l.percent >= 90 ? .systemRed : (l.percent >= 70 ? .systemOrange : accent)
+        // NUR_BLAU=1 (z. B. im LaunchAgent): Balken immer blau, ohne Orange/Rot
+        bar.color = ProcessInfo.processInfo.environment["NUR_BLAU"] != nil ? accent
+            : (l.percent >= 90 ? .systemRed : (l.percent >= 70 ? .systemOrange : accent))
         reset.stringValue = l.resetsIn.map(Self.resetText) ?? ""
     }
 }
 
 final class WidgetView: NSVisualEffectView {
-    let caption = NSTextField(labelWithString: "CLAUDE TOKENS")
+    let caption = NSTextField(labelWithString: "TOKENS")
     let dot = NSView()
     let big = NSTextField(labelWithString: "–")
     let unit = NSTextField(labelWithString: "")
@@ -204,12 +206,12 @@ final class WidgetView: NSVisualEffectView {
         big.textColor = .labelColor
         unit.font = .systemFont(ofSize: 12, weight: .semibold).rounded
         unit.textColor = accent
-        exact.font = .monospacedDigitSystemFont(ofSize: 11, weight: .medium)
-        exact.textColor = .secondaryLabelColor
+        exact.font = .monospacedDigitSystemFont(ofSize: 9, weight: .medium)
+        exact.textColor = .tertiaryLabelColor
 
         line.wantsLayer = true
         line.layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(0.1).cgColor
-        exact.isHidden = true
+        exact.alignment = .right
         for v in [caption, dot, big, unit, exact, line, fiveHour, week] {
             v.translatesAutoresizingMaskIntoConstraints = false
             addSubview(v)
@@ -231,11 +233,10 @@ final class WidgetView: NSVisualEffectView {
             unit.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
             unit.topAnchor.constraint(equalTo: big.bottomAnchor, constant: 0),
             unit.heightAnchor.constraint(equalToConstant: 14),
-            exact.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
-            exact.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -16),
-            exact.topAnchor.constraint(equalTo: unit.bottomAnchor, constant: 4),
-            exact.heightAnchor.constraint(equalToConstant: 14),
-            line.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
+            exact.leadingAnchor.constraint(greaterThanOrEqualTo: caption.trailingAnchor, constant: 6),
+            exact.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
+            exact.firstBaselineAnchor.constraint(equalTo: caption.firstBaselineAnchor),
+                        line.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
             line.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
             line.topAnchor.constraint(equalTo: unit.bottomAnchor, constant: 6),
             line.heightAnchor.constraint(equalToConstant: 1),
