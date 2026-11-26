@@ -1,5 +1,6 @@
 // Token-Widget: kleines Desktop-Widget, das den Gesamt-Tokenverbrauch live anzeigt.
 import AppKit
+import ServiceManagement
 
 let size: CGFloat = 158      // Breite
 let height: CGFloat = 158    // Höhe (quadratisch)
@@ -40,6 +41,29 @@ struct Limit { var percent: Double; var resetsIn: TimeInterval? }
 // und fragt damit die inoffizielle Anthropic-Schnittstelle ab. Schlägt etwas fehl, bleibt die Anzeige "nicht verbunden".
 var lastLimits: (Limit?, Limit?) = (nil, nil)
 var lastFetch = Date.distantPast
+var lastRenew = Date.distantPast
+
+// Abgelaufenen Login erneuern: Claude Code selbst einmal kurz starten (günstigstes Modell, ohne Verlauf).
+// Höchstens alle 30 Minuten. Ohne installiertes Claude Code passiert nichts.
+func renewLogin() {
+    guard Date().timeIntervalSince(lastRenew) > 1800 else { return }
+    lastRenew = Date()
+    let home = NSHomeDirectory()
+    let candidates = [home + "/.local/bin/claude", "/opt/homebrew/bin/claude", "/usr/local/bin/claude", home + "/.claude/local/claude"]
+    guard let bin = candidates.first(where: { FileManager.default.isExecutableFile(atPath: $0) }) else { return }
+    DispatchQueue.global(qos: .utility).async {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: bin)
+        p.arguments = ["-p", "ok", "--model", "haiku", "--no-session-persistence"]
+        p.currentDirectoryURL = URL(fileURLWithPath: home)
+        p.standardOutput = FileHandle.nullDevice
+        p.standardError = FileHandle.nullDevice
+        guard (try? p.run()) != nil else { return }
+        DispatchQueue.global().asyncAfter(deadline: .now() + 90) { if p.isRunning { p.terminate() } }
+        p.waitUntilExit()
+        lastFetch = .distantPast   // gleich neu abfragen
+    }
+}
 
 func fetchLimits() -> (Limit?, Limit?) {
     if Date().timeIntervalSince(lastFetch) < 120 { return lastLimits }
@@ -62,11 +86,14 @@ func fetchLimits() -> (Limit?, Limit?) {
     req.setValue("oauth-2025-04-20", forHTTPHeaderField: "anthropic-beta")
     var result: Data?
     let sem = DispatchSemaphore(value: 0)
+    var code = 0
     URLSession.shared.dataTask(with: req) { d, resp, _ in
-        if (resp as? HTTPURLResponse)?.statusCode == 200 { result = d }
+        code = (resp as? HTTPURLResponse)?.statusCode ?? 0
+        if code == 200 { result = d }
         sem.signal()
     }.resume()
     _ = sem.wait(timeout: .now() + 20)
+    if code == 401 { renewLogin() }
     guard let d = result, let j = try? JSONSerialization.jsonObject(with: d) as? [String: Any] else { lastLimits = (nil, nil); return lastLimits }
     func limit(_ key: String) -> Limit? {
         guard let o = j[key] as? [String: Any], let u = o["utilization"] as? Double else { return nil }
@@ -170,8 +197,9 @@ final class LimitRow: NSView {
         guard let l = l else { pct.stringValue = "–"; bar.value = 0; reset.stringValue = ""; return }
         pct.stringValue = "\(Int(l.percent.rounded())) %"
         bar.value = l.percent
-        // NUR_BLAU=1 (z. B. im LaunchAgent): Balken immer blau, ohne Orange/Rot
-        bar.color = ProcessInfo.processInfo.environment["NUR_BLAU"] != nil ? accent
+        // Balken immer blau: NUR_BLAU=1 oder `defaults write local.benni.tokenwidget NurBlau -bool true`
+        let nurBlau = ProcessInfo.processInfo.environment["NUR_BLAU"] != nil || UserDefaults.standard.bool(forKey: "NurBlau")
+        bar.color = nurBlau ? accent
             : (l.percent >= 90 ? .systemRed : (l.percent >= 70 ? .systemOrange : accent))
         reset.stringValue = l.resetsIn.map(Self.resetText) ?? ""
     }
@@ -310,7 +338,14 @@ final class App: NSObject, NSApplicationDelegate {
             window.setFrameOrigin(NSPoint(x: s.maxX - size - 24, y: s.maxY - height - 24))
         }
         window.setFrameAutosaveName("TokenWidget")
-        window.orderFront(nil)
+        // Nur sichtbar, solange die Claude-Desktop-App läuft
+        let ws = NSWorkspace.shared.notificationCenter
+        ws.addObserver(self, selector: #selector(updateVisibility), name: NSWorkspace.didLaunchApplicationNotification, object: nil)
+        ws.addObserver(self, selector: #selector(updateVisibility), name: NSWorkspace.didTerminateApplicationNotification, object: nil)
+        updateVisibility()
+
+        // Beim ersten Start selbst als Anmeldeobjekt eintragen (startet dann mit dem Mac, unsichtbar bis Claude offen ist)
+        if SMAppService.mainApp.status != .enabled { try? SMAppService.mainApp.register() }
 
         let menu = NSMenu()
         menu.addItem(withTitle: "Jetzt aktualisieren", action: #selector(refresh), keyEquivalent: "")
@@ -319,7 +354,22 @@ final class App: NSObject, NSApplicationDelegate {
         view.menu = menu
 
         refresh()
-        Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in self?.refresh() }
+        Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
+            if self?.window.isVisible == true { self?.refresh() }
+        }
+    }
+
+    static let claudeID = "com.anthropic.claudefordesktop"
+    var claudeRunning: Bool { !NSRunningApplication.runningApplications(withBundleIdentifier: Self.claudeID).isEmpty }
+
+    @objc func updateVisibility() {
+        // Testmodus (--snapshot) und IMMER_SICHTBAR=1 zeigen das Widget immer
+        let always = CommandLine.arguments.contains("--snapshot") || ProcessInfo.processInfo.environment["IMMER_SICHTBAR"] != nil
+        if always || claudeRunning {
+            if !window.isVisible { window.orderFront(nil); refresh() }
+        } else {
+            window.orderOut(nil)
+        }
     }
 
     @objc func refresh() {
@@ -355,6 +405,9 @@ final class App: NSObject, NSApplicationDelegate {
         }
     }
 }
+
+// Läuft das Widget schon, nicht ein zweites Mal starten
+if NSRunningApplication.runningApplications(withBundleIdentifier: Bundle.main.bundleIdentifier ?? "").count > 1 { exit(0) }
 
 let app = NSApplication.shared
 let delegate = App()

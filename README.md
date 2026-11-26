@@ -12,7 +12,11 @@ Quadratisches Widget (158 × 158, so groß wie ein kleines macOS-Widget) mit Mil
   Dafür liest das Widget deinen eigenen Claude-Code-Login aus dem Schlüsselbund und fragt damit alle 2 Minuten `api.anthropic.com` ab.
   Der Login verlässt deinen Mac nur in Richtung Anthropic und wird nirgends gespeichert.
   Die Schnittstelle ist **inoffiziell** und kann sich jederzeit ändern.
-- **Ohne gültigen Login** (z. B. wenn du nur die Claude-Desktop-App nutzt) rechnet das Widget selbst: Tokens im aktuellen
+- **Login abgelaufen?** Dann erneuert das Widget ihn selbst, indem es Claude Code einmal kurz startet
+  (Modell Haiku, ohne gespeicherten Verlauf, höchstens alle 30 Minuten, kostet jeweils ein paar Tokens).
+  Voraussetzung: Claude Code ist installiert und du warst dort mindestens einmal angemeldet (`claude auth login`).
+  Anthropic verlangt trotzdem ab und zu eine neue Anmeldung, dann einmal `claude auth login` ausführen.
+- **Ohne gültigen Login** rechnet das Widget selbst: Tokens im aktuellen
   5-Stunden-Fenster mit geschätzter Reset-Zeit und Verbrauch der letzten 7 Tage. Prozente gibt es dann nicht,
   weil Anthropic die Grenzen der Tarife nicht veröffentlicht.
 
@@ -21,7 +25,9 @@ Quadratisches Widget (158 × 158, so groß wie ein kleines macOS-Widget) mit Mil
   (oder Systemeinstellungen → Datenschutz & Sicherheit → **Dennoch öffnen**).
 - **Verschieben:** Einfach mit der Maus ziehen, die Position wird gemerkt.
 - **Beenden / Aktualisieren:** Rechtsklick auf das Widget.
-- **Autostart:** Systemeinstellungen → Allgemein → Anmeldeobjekte → **+** → `Token-Widget.app`.
+- **Automatisch:** Beim ersten Öffnen trägt sich das Widget als Anmeldeobjekt ein und startet danach mit dem Mac.
+  Sichtbar ist es nur, solange die Claude-Desktop-App offen ist. Abschalten: Systemeinstellungen → Allgemein → Anmeldeobjekte.
+- **Balken immer blau** (ohne Orange/Rot): `defaults write local.benni.tokenwidget NurBlau -bool true`, dann Widget neu starten.
 - **Selbst bauen:** `Widget/build.sh` (braucht die Xcode Command Line Tools: `xcode-select --install`).
 
 ## Terminal-Skripte (Python 3)
