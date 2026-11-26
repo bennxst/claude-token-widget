@@ -1,11 +1,20 @@
 # Token-Zähler für Claude Code
 
 Zeigt, wie viele Tokens du mit Claude Code auf deinem Mac verbraucht hast – als kleines Desktop-Widget und als Terminal-Skripte.
-Alles läuft lokal: Gezählt werden nur die Verläufe in `~/.claude/projects`, es wird nichts ins Internet geschickt.
+Gezählt werden die Verläufe in `~/.claude/projects` auf deinem Mac.
 
 ## Desktop-Widget
 
-Kleines Widget (160 × 160) mit Milchglas-Hintergrund, zeigt die Gesamtzahl gekürzt („1,58 Milliarden“) und genau. Aktualisiert sich alle 30 Sekunden.
+Quadratisches Widget (158 × 158, so groß wie ein kleines macOS-Widget) mit Milchglas-Hintergrund. Aktualisiert sich alle 30 Sekunden und zeigt:
+
+- **Gesamtverbrauch** gekürzt („1,58 Milliarden“), die genaue Zahl steht im Tooltip.
+- **5-Stunden-Limit und Wochen-Limit** mit Balken, Prozent und Reset-Zeit, wenn du in Claude Code angemeldet bist.
+  Dafür liest das Widget deinen eigenen Claude-Code-Login aus dem Schlüsselbund und fragt damit alle 2 Minuten `api.anthropic.com` ab.
+  Der Login verlässt deinen Mac nur in Richtung Anthropic und wird nirgends gespeichert.
+  Die Schnittstelle ist **inoffiziell** und kann sich jederzeit ändern.
+- **Ohne gültigen Login** (z. B. wenn du nur die Claude-Desktop-App nutzt) rechnet das Widget selbst: Tokens im aktuellen
+  5-Stunden-Fenster mit geschätzter Reset-Zeit und Verbrauch der letzten 7 Tage. Prozente gibt es dann nicht,
+  weil Anthropic die Grenzen der Tarife nicht veröffentlicht.
 
 - **Installieren:** `Token-Widget.app` in den Programme-Ordner ziehen und starten.
   Da die App nicht von Apple beglaubigt ist, beim ersten Start: Rechtsklick → **Öffnen** → **Öffnen**
